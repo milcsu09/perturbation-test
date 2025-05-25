@@ -9,9 +9,9 @@
 // #define WIDTH 1920
 // #define HEIGHT 1080
 #define MAX_ITER 5000
-#define ESCAPE_RADIUS 4
+#define ESCAPE_RADIUS 1e6
 
-#define FP 1024
+#define FP 2048
 
 void
 render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
@@ -20,6 +20,9 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
   double z_ref_re[MAX_ITER];
   double z_ref_im[MAX_ITER];
 
+  double escape_radius2 = ESCAPE_RADIUS * ESCAPE_RADIUS;
+  double escape_radius4 = escape_radius2 * escape_radius2;
+
   mpfr_t z_re, z_im, temp_re, temp_im, re_sqr, im_sqr, escape_radius_sqr;
   mpfr_inits2 (FP, z_re, z_im, temp_re, temp_im, re_sqr, im_sqr,
                escape_radius_sqr, (mpfr_ptr)0);
@@ -27,12 +30,12 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
   mpfr_set_d (z_re, 0.0, MPFR_RNDN);
   mpfr_set_d (z_im, 0.0, MPFR_RNDN);
 
-  mpfr_set_d (escape_radius_sqr, ESCAPE_RADIUS * ESCAPE_RADIUS, MPFR_RNDN);
-  mpfr_mul (escape_radius_sqr, escape_radius_sqr, escape_radius_sqr, MPFR_RNDN);
+  mpfr_set_d (escape_radius_sqr, escape_radius4, MPFR_RNDN);
 
   int ref_iter = 0;
 
-  const Uint32 time_start_orbit = SDL_GetTicks ();
+  // const Uint32 time_start_orbit = SDL_GetTicks ();
+  const Uint64 time_start_orbit = SDL_GetPerformanceCounter ();
 
   while (ref_iter < MAX_ITER)
     {
@@ -60,8 +63,10 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
       ref_iter++;
     }
 
-  const Uint32 time_end_orbit = SDL_GetTicks ();
-  const Uint32 time_start_perturbation = SDL_GetTicks ();
+  const Uint64 time_end_orbit = SDL_GetPerformanceCounter ();
+  // const Uint32 time_end_orbit = SDL_GetTicks ();
+  const Uint64 time_start_perturbation = SDL_GetPerformanceCounter ();
+  // const Uint32 time_start_perturbation = SDL_GetTicks ();
 
   uint32_t palette[] = {
     0xFF000000,
@@ -80,7 +85,7 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
   };
   int palette_size = sizeof (palette) / sizeof (palette[0]);
 
-#pragma omp parallel for schedule(dynamic, 1)
+#pragma omp parallel for collapse(2) schedule(dynamic)
   for (int y = 0; y < HEIGHT; y++)
     {
       for (int x = 0; x < WIDTH; x++)
@@ -124,7 +129,7 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
               double z_re = z_ref_re[ref_i] + delta_z_re;
               double z_im = z_ref_im[ref_i] + delta_z_im;
 
-              if (z_re * z_re + z_im * z_im > ESCAPE_RADIUS)
+              if (z_re * z_re + z_im * z_im > escape_radius2)
                 break;
 
               if ((delta_z_re * delta_z_re + delta_z_im * delta_z_im)
@@ -148,7 +153,7 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
                         + ((float)(iter % 1));
 
 
-              float freq = 0.1f;
+              float freq = 0.1f; // .1
               t = (float)(iter * freq);
               t = t
                   - floorf (t / palette_size)
@@ -172,14 +177,18 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
         }
     }
 
-  const Uint32 time_end_perturbation = SDL_GetTicks ();
+  const Uint64 time_end_perturbation = SDL_GetPerformanceCounter ();
 
-  printf ("render:         %dms\n",
-          (time_end_orbit - time_start_orbit)
-              + (time_end_perturbation - time_start_perturbation));
-  printf ("  orbit:        %dms\n", time_end_orbit - time_start_orbit);
-  printf ("  perturbation: %dms\n",
-          time_end_perturbation - time_start_perturbation);
+  double freq = SDL_GetPerformanceFrequency();
+
+  double time_orbit = (time_end_orbit - time_start_orbit) * 1000.0 / freq;
+  double time_perturbation =
+      (time_end_perturbation - time_start_perturbation) * 1000.0 / freq;
+
+  double time_render = time_orbit + time_perturbation;
+
+  printf ("\trender\t%.2fms (%.2fms %.2fms)\n", time_render, time_orbit,
+          time_perturbation);
 
   mpfr_clears (z_re, z_im, temp_re, temp_im, re_sqr, im_sqr, escape_radius_sqr,
                (mpfr_ptr)0);
@@ -237,10 +246,23 @@ main (int argc, char *argv[])
       return 1;
     }
 
+  SDL_DisplayMode mode;
+  if (SDL_GetCurrentDisplayMode (0, &mode) != 0)
+    {
+      fprintf (stderr, "Could not get display mode: %s\n", SDL_GetError ());
+      SDL_DestroyTexture (texture);
+      SDL_DestroyRenderer (renderer);
+      SDL_DestroyWindow (window);
+      SDL_Quit ();
+      return 1;
+    }
+
+  int refresh_rate = mode.refresh_rate;
+
   mpfr_t center_re_mpfr, center_im_mpfr, scale_mpfr;
   mpfr_inits2 (FP, center_re_mpfr, center_im_mpfr, scale_mpfr, (mpfr_ptr)0);
 
-  mpfr_set_str (center_re_mpfr, "0", 10,
+  mpfr_set_str (center_re_mpfr, "-0.75", 10,
                 MPFR_RNDN);
   mpfr_set_str (center_im_mpfr, "0", 10, MPFR_RNDN);
 
@@ -252,7 +274,7 @@ main (int argc, char *argv[])
 
   int redraw = 1;
   int quit = 0;
-  SDL_Event e;
+  SDL_Event event;
 
   const Uint8 *keys;
   double moveSpeed = 0.1;
@@ -263,44 +285,21 @@ main (int argc, char *argv[])
   int zoom_expect_recompute = 0;
   int zoom_last_time = 0;
 
+  int drag_sx = 0;
+  int drag_sy = 0;
+  int drag_dx = 0;
+  int drag_dy = 0;
+  int dragging = 0;
+
   while (!quit)
     {
-      keys = SDL_GetKeyboardState (NULL);
-
-      double pan = moveSpeed * scale_d * 50;
-
-      if (keys[SDL_SCANCODE_W])
-        {
-          mpfr_sub_d (center_im_mpfr, center_im_mpfr, pan, MPFR_RNDN);
-          redraw = 1;
-        }
-      if (keys[SDL_SCANCODE_S])
-        {
-          mpfr_add_d (center_im_mpfr, center_im_mpfr, pan, MPFR_RNDN);
-          redraw = 1;
-        }
-      if (keys[SDL_SCANCODE_A])
-        {
-          mpfr_sub_d (center_re_mpfr, center_re_mpfr, pan, MPFR_RNDN);
-          redraw = 1;
-        }
-      if (keys[SDL_SCANCODE_D])
-        {
-          mpfr_add_d (center_re_mpfr, center_re_mpfr, pan, MPFR_RNDN);
-          redraw = 1;
-        }
-
-      if (keys[SDL_SCANCODE_S])
-        {
-          mpfr_mul_d (scale_mpfr, scale_mpfr, 0.9, MPFR_RNDN);
-          redraw = 1;
-        }
-
-      while (SDL_PollEvent (&e))
-        {
-          if (e.type == SDL_QUIT)
+      while (SDL_PollEvent (&event))
+        switch (event.type)
+          {
+          case SDL_QUIT:
             quit = 1;
-          else if (e.type == SDL_MOUSEWHEEL)
+            break;
+          case SDL_MOUSEWHEEL:
             {
               int mx, my;
               SDL_GetMouseState (&mx, &my);
@@ -311,12 +310,46 @@ main (int argc, char *argv[])
                   zoom_y = my;
                 }
 
-              zoom_value *= e.wheel.y > 0 ? 1.25 : 0.75;
+              zoom_value *= event.wheel.y > 0 ? 1.25 : 0.75;
 
               zoom_expect_recompute = 1;
               zoom_last_time = SDL_GetTicks ();
             }
-        }
+            break;
+          case SDL_MOUSEBUTTONDOWN:
+            if (event.button.button == SDL_BUTTON_LEFT)
+              {
+                drag_sx = event.button.x;
+                drag_sy = event.button.y;
+                dragging = 1;
+              }
+            break;
+          case SDL_MOUSEBUTTONUP:
+            if (event.button.button == SDL_BUTTON_LEFT)
+              {
+                dragging = 0;
+                const double dx = drag_dx * scale_d;
+                const double dy = drag_dy * scale_d;
+
+                mpfr_sub_d (center_re_mpfr, center_re_mpfr, dx, MPFR_RNDN);
+                mpfr_sub_d (center_im_mpfr, center_im_mpfr, dy, MPFR_RNDN);
+
+                drag_dx = drag_dy = 0;
+
+                redraw = 1;
+              }
+            break;
+          case SDL_MOUSEMOTION:
+            if (dragging)
+              {
+                drag_dx = event.motion.x - drag_sx;
+                drag_dy = event.motion.y - drag_sy;
+              }
+            break;
+        break;
+          default:
+            break;
+          }
 
       if (zoom_expect_recompute)
         {
@@ -366,6 +399,9 @@ main (int argc, char *argv[])
             }
         }
 
+      // SDL_SetRenderDrawColor (renderer, 42, 14, 107, 255);
+      // SDL_RenderClear (renderer);
+
       if (redraw)
         {
           center_re_d = mpfr_get_d (center_re_mpfr, MPFR_RNDN);
@@ -375,23 +411,21 @@ main (int argc, char *argv[])
           render (pixels, center_re_mpfr, center_im_mpfr, scale_d);
 
           SDL_UpdateTexture (texture, NULL, pixels, WIDTH * sizeof (uint32_t));
-          SDL_RenderClear (renderer);
 
           printf ("Z=%.2e\n", scale_d);
           redraw = 0;
         }
 
       SDL_Rect vr = {
-        .x = zoom_x - zoom_x * zoom_value,
-        .y = zoom_y - zoom_y * zoom_value,
+        .x = zoom_x - zoom_x * zoom_value + drag_dx,
+        .y = zoom_y - zoom_y * zoom_value + drag_dy,
         .w = WIDTH * zoom_value,
         .h = HEIGHT * zoom_value,
       };
-
       SDL_RenderCopy (renderer, texture, NULL, &vr);
       SDL_RenderPresent (renderer);
 
-      SDL_Delay (16);
+      SDL_Delay (1000 / refresh_rate);
     }
 
   free (pixels);
