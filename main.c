@@ -4,10 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define WIDTH 800
-#define HEIGHT 600
+// #define WIDTH 800
+// #define HEIGHT 600
 // #define WIDTH 1920
 // #define HEIGHT 1080
+#define WIDTH 1600
+#define HEIGHT  900
 #define MAX_ITER 5000
 #define ESCAPE_RADIUS 1e6
 
@@ -68,6 +70,7 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
   const Uint64 time_start_perturbation = SDL_GetPerformanceCounter ();
   // const Uint32 time_start_perturbation = SDL_GetTicks ();
 
+  /*
   uint32_t palette[] = {
     0xFF000000,
     0xFF1A0A5E,
@@ -83,6 +86,37 @@ render (uint32_t *pixels, mpfr_t center_re_mpfr, mpfr_t center_im_mpfr,
     0xFF1F3D88,
     0xFF0A1A5E,
   };
+  */
+
+uint32_t palette[] = {
+  0xE8C9A9,
+  0xD8A58F,
+  0xBA786C,
+  0x9D5B5B,
+  0x814C5C,
+  0x5E3F4F,
+  0x433748
+};
+
+  /*
+uint32_t palette[] = {
+  0xBCCAB3,
+  0x94A98F,
+  0x6E8B6C,
+  0x516A52,
+  0x3C4F3E,
+  0x2D3A2F,
+  0x1F2A22
+};
+  */
+
+
+
+
+
+
+
+
   int palette_size = sizeof (palette) / sizeof (palette[0]);
 
 #pragma omp parallel for collapse(2) schedule(dynamic)
